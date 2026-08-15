@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 
 import asyncio
 
+from cjm_substrate_qt_kit.keys import bind
+from cjm_substrate_qt_kit.style import apply_row_style
 from cjm_substrate_tui_kit.form import ConfigForm
 from cjm_transcription_core.cli import expand_sources
 from cjm_transcription_core.models import PipelineConfig
@@ -32,9 +34,7 @@ from cjm_transcription_tui.candidates import (candidate_directives, model_axis,
 from cjm_transcription_tui.results import RunIndex
 from cjm_transcription_tui.sources import CollectionField, SourceBrowser
 from cjm_transcription_tui.state import save_state
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QInputDialog, QLabel, QListWidget, QListWidgetItem,
                                QMainWindow, QPlainTextEdit, QSplitter,
                                QStackedWidget, QVBoxLayout, QWidget)
@@ -44,23 +44,6 @@ from .panes import (candidate_rows, compare_header, compare_rows, config_header,
                     config_rows, cwd_label, drill_header, drill_source_rows,
                     entry_rows, run_rows, segment_text, selection_html)
 from .player import SegmentPlayer
-
-# Same palette words as the workbench shell (theme-neutral hexes readable on
-# light and dark) — the second consumer of this mapping; kit-extraction pending.
-STYLE_COLORS = {"red": "#c74a3c", "yellow": "#b9770e", "cyan": "#2b8a9d",
-                "green": "#3f9d55", "blue": "#4a6fb5", "dim": "#8a9299"}
-
-
-def apply_row_style(item: QListWidgetItem, style: Optional[str]) -> None:
-    parts = str(style or "").split()
-    for word in parts:
-        if word in STYLE_COLORS:
-            item.setForeground(QColor(STYLE_COLORS[word]))
-    if "bold" in parts:
-        font = item.font()
-        font.setBold(True)
-        item.setFont(font)
-
 
 HINTS = {
     "sources": "enter descend/toggle · a folder-source · c collection · x none · "
@@ -248,33 +231,30 @@ class TranscriptionWindow(QMainWindow):
             self.statusBar().addPermanentWidget(chip)
 
     def _bind_keys(self) -> None:
-        def bind(key: str, fn) -> None:
-            shortcut = QShortcut(QKeySequence(key), self)
-            shortcut.setContext(Qt.WindowShortcut)
-            shortcut.activated.connect(fn)
-        bind("J", lambda: self.move_cursor(1))
-        bind("K", lambda: self.move_cursor(-1))
-        bind("Return", self.on_select)
-        bind("Space", self.on_select)
-        bind("Backspace", self.on_updir)
-        bind("A", self.on_key_a)
-        bind("L", self.on_mark_light)
-        bind("C", self.on_config)
-        bind("N", self.on_next_stage)
-        bind("B", self.on_prev_stage)
-        bind("[", lambda: self.on_segment(-1))
-        bind("]", lambda: self.on_segment(1))
-        bind("R", self.on_rerun)
-        bind("P", self.on_play)
-        bind("D", self.on_preprocess)
-        bind("S", self.on_diarization)
-        bind("V", self.on_results)
-        bind("X", self.on_collection_none)
-        bind("H", self.on_hash_check)
-        bind("M", self.on_bookmark)
-        bind("'", self.on_jump_bookmark)
-        bind("Escape", self.on_cancel)
-        bind("Q", self.on_quit)
+        for key, fn in (("J", lambda: self.move_cursor(1)),
+                        ("K", lambda: self.move_cursor(-1)),
+                        ("Return", self.on_select),
+                        ("Space", self.on_select),
+                        ("Backspace", self.on_updir),
+                        ("A", self.on_key_a),
+                        ("L", self.on_mark_light),
+                        ("C", self.on_config),
+                        ("N", self.on_next_stage),
+                        ("B", self.on_prev_stage),
+                        ("[", lambda: self.on_segment(-1)),
+                        ("]", lambda: self.on_segment(1)),
+                        ("R", self.on_rerun),
+                        ("P", self.on_play),
+                        ("D", self.on_preprocess),
+                        ("S", self.on_diarization),
+                        ("V", self.on_results),
+                        ("X", self.on_collection_none),
+                        ("H", self.on_hash_check),
+                        ("M", self.on_bookmark),
+                        ("'", self.on_jump_bookmark),
+                        ("Escape", self.on_cancel),
+                        ("Q", self.on_quit)):
+            bind(self, key, fn)
 
     # ---- painting -------------------------------------------------------
 

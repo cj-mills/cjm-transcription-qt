@@ -18,60 +18,44 @@ the VRAM frees); unloads run in reverse load order.
 """
 
 import asyncio
-import threading
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from cjm_substrate.core.manager import CapabilityManager
 from cjm_substrate.core.queue import JobQueue
+from cjm_substrate_qt_kit.loopthread import LoopThreadSession
 from cjm_transcription_core.cli import load_capabilities
 from cjm_transcription_tui.probe import SegmentProbe
 
 
-class CapabilitySession:
+class CapabilitySession(LoopThreadSession):
     """The loop-thread seat for one comparison stack.
 
-    start() spins the loop; open_stack() builds manager+queue+probe ON the loop
-    (awaiting any pending unload chain first); the fetch/act verbs return
-    concurrent Futures; teardown_background() detaches the live stack and
-    drains it behind the seat; close() tears everything down blocking (the
-    exit path). One instance per window, like GraphSession."""
+    start() spins the loop (kit LoopThreadSession); open_stack() builds
+    manager+queue+probe ON the loop (awaiting any pending unload chain first);
+    the fetch/act verbs return concurrent Futures; teardown_background()
+    detaches the live stack and drains it behind the seat; close() tears
+    everything down blocking (the exit path). One instance per window, like
+    GraphSession."""
+
+    thread_name = "capability-session"
 
     def __init__(self, manifests_dir: str,
                  *, sysmon_capability: Optional[str] = None,
                  timeout: float = 1800.0,  # model loads can take minutes cold
                  loader: Callable[..., Any] = load_capabilities,
                  probe_factory: Callable[..., Any] = SegmentProbe):
+        super().__init__(timeout=timeout)
         self.manifests_dir = manifests_dir
         self.sysmon_capability = sysmon_capability
-        self.timeout = timeout
         self._loader = loader
         self._probe_factory = probe_factory
         self.manager: Optional[Any] = None
         self.queue: Optional[Any] = None
         self.probe: Optional[Any] = None
         self.loaded_ids: List[str] = []
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
         self._unload_chain: Optional[Future] = None
-
-    # ---- loop plumbing --------------------------------------------------
-
-    def start(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._loop.run_forever,
-                                        name="capability-session", daemon=True)
-        self._thread.start()
-
-    def submit(self, coro) -> Future:
-        """Schedule a coroutine on the loop thread; the Future resolves there
-        (the Qt shell lands it via a queued Signal, never a blocking wait)."""
-        return asyncio.run_coroutine_threadsafe(coro, self._loop)
-
-    def _call(self, coro):
-        """Blocking submit — teardown paths and headless tests."""
-        return self.submit(coro).result(self.timeout)
 
     # ---- stack lifecycle ------------------------------------------------
 
@@ -214,7 +198,7 @@ class CapabilitySession:
                 pass
             self._unload_chain = None
         if queue is not None or manager is not None:
-            self._call(self._teardown_of(queue, manager, ids))
+            self.call(self._teardown_of(queue, manager, ids))
 
     async def _await_unloads(self) -> None:
         chain = self._unload_chain
@@ -226,9 +210,7 @@ class CapabilitySession:
 
     def close(self) -> None:
         """Full stop: teardown, then the loop thread (window close)."""
-        if self._loop is None:
+        if not self.running:
             return
         self.teardown()
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        if self._thread is not None:
-            self._thread.join(timeout=5)
+        super().close()
