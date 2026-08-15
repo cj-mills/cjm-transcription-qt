@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from cjm_transcription_tui.candidates import model_axis
 from cjm_transcription_tui.results import RunIndex
 
+
 # ---- sources stage ------------------------------------------------------
 
 

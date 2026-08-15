@@ -19,30 +19,28 @@ here through QUEUED Signals — the paint thread never blocks on capability work
 The blocked-reason QTimer mirrors the Textual _watch_blocked poll at the same
 2s cadence."""
 
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import asyncio
 
 from cjm_substrate_qt_kit.keys import bind
 from cjm_substrate_qt_kit.style import apply_row_style
 from cjm_substrate_tui_kit.form import ConfigForm
 from cjm_transcription_core.cli import expand_sources
 from cjm_transcription_core.models import PipelineConfig
-from cjm_transcription_tui.candidates import (candidate_directives, model_axis,
-                                              spec_string, transcription_manifests)
+from cjm_transcription_tui.candidates import (candidate_directives, model_axis, spec_string,
+                                              transcription_manifests)
 from cjm_transcription_tui.results import RunIndex
 from cjm_transcription_tui.sources import CollectionField, SourceBrowser
 from cjm_transcription_tui.state import save_state
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import (QInputDialog, QLabel, QListWidget, QListWidgetItem,
-                               QMainWindow, QPlainTextEdit, QSplitter,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
+                               QPlainTextEdit, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
 
 from .capability_session import CapabilitySession
-from .panes import (candidate_rows, compare_header, compare_rows, config_header,
-                    config_rows, cwd_label, drill_header, drill_source_rows,
-                    entry_rows, run_rows, segment_text, selection_html)
+from .panes import (candidate_rows, compare_header, compare_rows, config_header, config_rows,
+                    cwd_label, drill_header, drill_source_rows, entry_rows, run_rows, segment_text,
+                    selection_html)
 from .player import SegmentPlayer
 
 HINTS = {
