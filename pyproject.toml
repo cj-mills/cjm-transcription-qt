@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cjm-transcription-qt"
+version = "0.0.1"
+description = "Qt shell for the transcription-workflow setup app — the first workflow TUI migrated to the PySide6 lane (DEC c4b0d6e5): the same three-stage run setup (sources -> candidates -> compare) and headless hand-off as cjm-transcription-tui, whose pure spine modules it imports; long-running capability jobs with progress run under a Qt event loop via a private asyncio loop thread (CapabilitySession). Born on-graph."
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+authors = [{name = "Christian J. Mills", email = "9126128+cj-mills@users.noreply.github.com"}]
+classifiers = ["Programming Language :: Python :: 3", "Programming Language :: Python :: 3 :: Only"]
+dependencies = ['cjm-transcription-tui>=0.0.4', 'cjm-transcription-core>=0.0.7', 'cjm-substrate>=0.0.60', 'cjm-substrate-tui-kit>=0.0.1', 'PySide6']
+
+[project.scripts]
+cjm-transcription-qt = "cjm_transcription_qt.cli:main"
+
+[project.urls]
+Repository = "https://github.com/cj-mills/cjm-transcription-qt"
+
+[tool.setuptools.packages.find]
+include = ["cjm_transcription_qt*"]
