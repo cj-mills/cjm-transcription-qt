@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from cjm_substrate_qt_kit.keys import bind
 from cjm_substrate_qt_kit.style import apply_row_style
+from cjm_substrate_qt_kit.theme import style_text_pane
 from cjm_substrate_tui_kit.form import ConfigForm
 from cjm_transcription_core.cli import expand_sources
 from cjm_transcription_core.models import PipelineConfig
@@ -168,6 +169,7 @@ class TranscriptionWindow(QMainWindow):
         def text_pane() -> QPlainTextEdit:
             pane = QPlainTextEdit()
             pane.setReadOnly(True)
+            style_text_pane(pane, live=True)
             return pane
 
         self.src_cwd = label()

@@ -6,6 +6,7 @@ middle differs."""
 
 import sys
 
+from cjm_substrate_qt_kit.theme import apply_theme
 from cjm_transcription_tui.cli import build_parser, hand_off, resolve_settings
 from PySide6.QtWidgets import QApplication
 
@@ -19,6 +20,7 @@ def main() -> int:  # Console-script entry point (cjm-transcription-qt)
     args = parser.parse_args()
     s = resolve_settings(args)
     qapp = QApplication(sys.argv[:1])
+    apply_theme(qapp)
     win = TranscriptionWindow(s["manifests_dir"], start_dir=s["start_dir"],
                               runs_dir=s["runs_dir"],
                               initial_sources=args.paths or None,
