@@ -24,16 +24,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from cjm_substrate_qt_kit.keys import bind
+from cjm_substrate_qt_kit.player import SpanPlayer
 from cjm_substrate_qt_kit.style import apply_row_style
 from cjm_substrate_qt_kit.theme import style_text_pane
 from cjm_substrate_tui_kit.form import ConfigForm
+from cjm_transcription_core.candidates import (candidate_directives, model_axis, spec_string,
+                                               transcription_manifests)
 from cjm_transcription_core.cli import expand_sources
 from cjm_transcription_core.models import PipelineConfig
-from cjm_transcription_tui.candidates import (candidate_directives, model_axis, spec_string,
-                                              transcription_manifests)
-from cjm_transcription_tui.results import RunIndex
-from cjm_transcription_tui.sources import CollectionField, SourceBrowser
-from cjm_transcription_tui.state import save_state
+from cjm_transcription_core.results import RunIndex
+from cjm_transcription_core.sources import CollectionField, SourceBrowser
+from cjm_transcription_core.state import save_state
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
                                QPlainTextEdit, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
@@ -42,7 +43,6 @@ from .capability_session import CapabilitySession
 from .panes import (candidate_rows, compare_header, compare_rows, config_header, config_rows,
                     cwd_label, drill_header, drill_source_rows, entry_rows, run_rows, segment_text,
                     selection_html)
-from .player import SegmentPlayer
 
 HINTS = {
     "sources": "enter descend/toggle · a folder-source · c collection · x none · "
@@ -123,7 +123,7 @@ class TranscriptionWindow(QMainWindow):
         self.results_run: Optional[int] = None
         self.results_seg = 0
         self.bookmarks: List[str] = list(initial_bookmarks or [])
-        self.player: Optional[SegmentPlayer] = None
+        self.player: Optional[SpanPlayer] = None
         self.sess = CapabilitySession(manifests_dir,
                                       sysmon_capability=sysmon_capability)
         self.sess.start()
@@ -789,7 +789,7 @@ class TranscriptionWindow(QMainWindow):
         else:
             return
         if self.player is None:
-            self.player = SegmentPlayer(self)
+            self.player = SpanPlayer(self)
         self.player.play(wav)
         err = self.player.error_text()
         if err:

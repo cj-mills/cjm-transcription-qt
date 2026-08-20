@@ -6,12 +6,11 @@ Qt shell for the transcription-workflow setup app — the first workflow TUI mig
 
 ## Modules
 
-- **`cjm_transcription_qt`** — Qt shell for the transcription-workflow setup app — the first workflow TUI on the PySide6 lane (DEC dcf8a712).
+- **`cjm_transcription_qt.__init__`** — Qt shell for the transcription-workflow setup app — the first workflow TUI on the PySide6 lane (DEC dcf8a712).
 - **`cjm_transcription_qt.app`** — The Qt transcription-workflow shell: the same three-stage run setup as the
 - **`cjm_transcription_qt.capability_session`** — One capability stack behind a private asyncio loop thread — the jobs+progress
 - **`cjm_transcription_qt.cli`** — Console-script driver for the Qt shell: the SAME argument surface,
 - **`cjm_transcription_qt.panes`** — Pure row/label builders for the Qt shell — the paint logic, Qt-free.
-- **`cjm_transcription_qt.player`** — Segment playback via QMediaPlayer — the Qt lane's audio answer (DEC dcf8a712).
 
 ## API
 
@@ -42,10 +41,6 @@ Qt shell for the transcription-workflow setup app — the first workflow TUI mig
 - `segment_text` _function_ — A drilled segment as PLAIN text: header line, then one block per
 - `selection_html` _function_ — The Selected block + Collection line (ae3464fc) as one HTML fragment.
 
-### `cjm_transcription_qt.player`
-
-- `SegmentPlayer` _class_ — Play/stop one WAV at a time; p toggles (press again to cut playback).
-
 ## Dependencies
 
-**Depends on:** `PySide6`, `cjm-substrate`, `cjm-substrate-qt-kit`, `cjm-substrate-tui-kit`, `cjm-transcription-core`, `cjm-transcription-tui`
+**Depends on:** `PySide6`, `cjm-substrate`, `cjm-substrate-qt-kit`, `cjm-substrate-tui-kit`, `cjm-transcription-core`

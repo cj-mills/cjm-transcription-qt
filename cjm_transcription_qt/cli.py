@@ -1,13 +1,14 @@
 """Console-script driver for the Qt shell: the SAME argument surface,
-resolution ladder, and headless hand-off as cjm-transcription-tui — all three
-imported from it (build_parser / resolve_settings / hand_off), so the two
-shells cannot drift on the reproducibility contract. Only the window in the
-middle differs."""
+resolution ladder, and headless hand-off as every transcription shell — all
+three imported from cjm_transcription_core.launch (build_parser /
+resolve_settings / hand_off; absorbed there by spine absorption 12f342f1),
+so the shells cannot drift on the reproducibility contract. Only the window
+in the middle differs."""
 
 import sys
 
 from cjm_substrate_qt_kit.theme import apply_theme
-from cjm_transcription_tui.cli import build_parser, hand_off, resolve_settings
+from cjm_transcription_core.launch import build_parser, hand_off, resolve_settings
 from PySide6.QtWidgets import QApplication
 
 from .app import TranscriptionWindow

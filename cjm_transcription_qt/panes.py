@@ -17,8 +17,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from cjm_transcription_tui.candidates import model_axis
-from cjm_transcription_tui.results import RunIndex
+from cjm_transcription_core.candidates import model_axis
+from cjm_transcription_core.results import RunIndex
 
 
 # ---- sources stage ------------------------------------------------------

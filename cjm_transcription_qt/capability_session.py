@@ -26,7 +26,7 @@ from cjm_substrate.core.manager import CapabilityManager
 from cjm_substrate.core.queue import JobQueue
 from cjm_substrate_qt_kit.loopthread import LoopThreadSession
 from cjm_transcription_core.cli import load_capabilities
-from cjm_transcription_tui.probe import SegmentProbe
+from cjm_transcription_core.probe import SegmentProbe
 
 
 class CapabilitySession(LoopThreadSession):
