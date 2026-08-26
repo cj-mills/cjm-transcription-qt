@@ -23,8 +23,11 @@ import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from cjm_substrate_qt_kit.keys import bind
+from cjm_substrate_qt_kit.findbar import FindBar
+from cjm_substrate_qt_kit.keyhints import KeyHintsOverlay
+from cjm_substrate_qt_kit.keymap import KeymapRegistry
 from cjm_substrate_qt_kit.player import SpanPlayer
+from cjm_substrate_qt_kit.statusstrip import StatusStrip
 from cjm_substrate_qt_kit.style import apply_row_style
 from cjm_substrate_qt_kit.theme import style_text_pane
 from cjm_substrate_tui_kit.form import ConfigForm
@@ -220,41 +223,73 @@ class TranscriptionWindow(QMainWindow):
         for p in (self.sources_page, self.candidates_page, self.config_page,
                   self.compare_page, self.results_page):
             self.stack.addWidget(p)
-        self.setCentralWidget(self.stack)
-
+        self.findbar = FindBar(self.res_text)  # focus-follow covers cmp_text too
+        central = QWidget()
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self.stack, 1)
+        outer.addWidget(self.findbar)
+        self.strip = StatusStrip()
+        outer.addWidget(self.strip)
+        self.hints_overlay = KeyHintsOverlay(self)
+        self.setCentralWidget(central)
         # Status chips: journal + speakers ALWAYS visible (drive-1 discipline),
-        # the unload chip while a background drain holds VRAM.
-        self.chip_journal = QLabel()
-        self.chip_speakers = QLabel()
-        self.chip_unload = QLabel()
-        for chip in (self.chip_journal, self.chip_speakers, self.chip_unload):
-            self.statusBar().addPermanentWidget(chip)
+        # the unload chip while a background drain holds VRAM — all on the
+        # strip's chip row now (DEC 2a42c028 — QStatusBar retired).
 
     def _bind_keys(self) -> None:
-        for key, fn in (("J", lambda: self.move_cursor(1)),
-                        ("K", lambda: self.move_cursor(-1)),
-                        ("Return", self.on_select),
-                        ("Space", self.on_select),
-                        ("Backspace", self.on_updir),
-                        ("A", self.on_key_a),
-                        ("L", self.on_mark_light),
-                        ("C", self.on_config),
-                        ("N", self.on_next_stage),
-                        ("B", self.on_prev_stage),
-                        ("[", lambda: self.on_segment(-1)),
-                        ("]", lambda: self.on_segment(1)),
-                        ("R", self.on_rerun),
-                        ("P", self.on_play),
-                        ("D", self.on_preprocess),
-                        ("S", self.on_diarization),
-                        ("V", self.on_results),
-                        ("X", self.on_collection_none),
-                        ("H", self.on_hash_check),
-                        ("M", self.on_bookmark),
-                        ("'", self.on_jump_bookmark),
-                        ("Escape", self.on_cancel),
-                        ("Q", self.on_quit)):
-            bind(self, key, fn)
+        # Kit KeymapRegistry (adoption rung caa33c98): declarative table =
+        # discovery surface; guard_text_entry keeps character verbs out of the
+        # FindBar field.
+        self.keymap = KeymapRegistry(self)
+        add = self.keymap.add
+        add("next", "Next row", "J", lambda: self.move_cursor(1), group="Rows")
+        add("prev", "Previous row", "K", lambda: self.move_cursor(-1),
+            group="Rows")
+        add("select", "Select / descend", "Return", self.on_select,
+            group="Rows")
+        add("select-space", "Select (Space)", "Space", self.on_select,
+            group="Rows")
+        add("updir", "Up a directory", "Backspace", self.on_updir,
+            group="Rows")
+        add("add", "Add / assign", "A", self.on_key_a, group="Rows")
+        add("mark-light", "Mark light", "L", self.on_mark_light, group="Rows")
+        add("config", "Config page", "C", self.on_config, group="Stage")
+        add("next-stage", "Next stage", "N", self.on_next_stage, group="Stage")
+        add("prev-stage", "Previous stage", "B", self.on_prev_stage,
+            group="Stage")
+        add("rerun", "Re-run", "R", self.on_rerun, group="Stage")
+        add("preprocess", "Preprocess", "D", self.on_preprocess, group="Stage")
+        add("diarization", "Diarization", "S", self.on_diarization,
+            group="Stage")
+        add("results", "Results view", "V", self.on_results, group="Stage")
+        add("segment-prev", "Previous segment", "[",
+            lambda: self.on_segment(-1), group="Audio")
+        add("segment-next", "Next segment", "]", lambda: self.on_segment(1),
+            group="Audio")
+        add("play", "Play", "P", self.on_play, group="Audio")
+        add("collection-none", "Clear collection", "X", self.on_collection_none,
+            group="App")
+        add("hash-check", "Hash check", "H", self.on_hash_check, group="App")
+        add("bookmark", "Bookmark", "M", self.on_bookmark, group="App")
+        add("jump-bookmark", "Jump to bookmark", "'", self.on_jump_bookmark,
+            group="App")
+        add("cancel", "Cancel", "Escape", self.on_cancel, group="App")
+        add("quit", "Quit", "Q", self.on_quit, group="App")
+        add("keys", "Keyboard hints", "?", self.hints_overlay.toggle,
+            group="App")
+        add("find", "Find in text pane", "Ctrl+F", self.open_find)
+        add("find-next", "Find next", "F3", self.findbar.next)
+        add("find-previous", "Find previous", "Shift+F3", self.findbar.previous)
+        self.keymap.guard_text_entry()
+
+    def open_find(self) -> None:
+        """Ctrl+F: find over the visible text pane (kit FindBar; focus-follow
+        re-attaches when the user clicks into another searchable pane)."""
+        pane = self.cmp_text if self.stage == "compare" else self.res_text
+        self.findbar.attach(pane)
+        self.findbar.open()
 
     # ---- painting -------------------------------------------------------
 
@@ -383,35 +418,40 @@ class TranscriptionWindow(QMainWindow):
             self._paint_transcript()
 
     def _refresh_status(self) -> None:
+        """Footer decomposition (DEC 2a42c028): stage/journal/speakers/unload
+        chips, the error/busy/notice ladder on the readout, the stage legend
+        on the hint line, the ?-overlay tracking the registry."""
         if self.graph_capability:
-            self.chip_journal.setText(f"<span style='color:#3f9d55'> journal→"
-                                      f"{self.graph_capability} </span>")
+            journal = (f"<span style='color:#3f9d55'> journal→"
+                       f"{self.graph_capability} </span>")
         else:
-            self.chip_journal.setText("<b><span style='color:#c74a3c'> NOT "
-                                      "JOURNALED </span></b>")
+            journal = ("<b><span style='color:#c74a3c'> NOT "
+                       "JOURNALED </span></b>")
         if self.diarization_capability and self.diarization_enabled:
-            self.chip_speakers.setText(f"<span style='color:#3f9d55'> speakers→"
-                                       f"{self.diarization_capability} </span>")
+            speakers = (f"<span style='color:#3f9d55'> speakers→"
+                        f"{self.diarization_capability} </span>")
         elif self.diarization_capability:
-            self.chip_speakers.setText("<span style='color:#b9770e'> speakers "
-                                       "OFF </span>")
+            speakers = "<span style='color:#b9770e'> speakers OFF </span>"
         else:
-            self.chip_speakers.setText("<span style='color:#8a9299'> no "
-                                       "diarization </span>")
-        self.chip_unload.setText(
-            "<span style='color:#b9770e'> unloading previous stack… </span>"
-            if self.sess.unloading else "")
+            speakers = "<span style='color:#8a9299'> no diarization </span>"
+        chips = [("stage", self.stage.upper()), ("journal", journal),
+                 ("speakers", speakers)]
+        if self.sess.unloading:
+            chips.append(("unload", "<span style='color:#b9770e'> unloading "
+                                    "previous stack… </span>"))
+        self.strip.set_chips(chips)
         hints_key = ("results_drill" if self.stage == "results"
                      and self.results_run is not None else self.stage)
         if self.error:
-            msg = f"⚠ {self.error}"
+            self.strip.set_readout(f"⚠ {self.error}", role="warn")
         elif self.busy:
-            msg = self.busy
+            self.strip.set_readout(self.busy)
         elif self.notice:
-            msg = self.notice
+            self.strip.set_readout(self.notice)
         else:
-            msg = f"{self.stage.upper()}  ·  {HINTS[hints_key]}"
-        self.statusBar().showMessage(msg)
+            self.strip.clear_readout()
+        self.strip.set_hints(HINTS[hints_key] + " · ? keys")
+        self.hints_overlay.set_entries(self.keymap.entries())
 
     # ---- gestures (stage-dispatched, busy-gated like the Textual actions) ----
 
