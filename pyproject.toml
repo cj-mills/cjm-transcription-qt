@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cjm-transcription-qt"
-version = "0.0.2"
+version = "0.0.3"
 description = "Qt shell for the transcription-workflow setup app — the first workflow TUI migrated to the PySide6 lane (DEC c4b0d6e5): the same three-stage run setup (sources -> candidates -> compare) and headless hand-off as cjm-transcription-tui, whose pure spine modules it imports; long-running capability jobs with progress run under a Qt event loop via a private asyncio loop thread (CapabilitySession). Born on-graph."
 readme = "README.md"
 requires-python = ">=3.12"
