@@ -172,3 +172,20 @@ def test_flag_line_chip_and_segment_text_verdict():
     assert plain == segment_text(seg, (0, 1), flags=None)
     assert flagged.splitlines()[1].startswith("⚑ flagged:") and flagged.splitlines()[0] == plain.splitlines()[0]
     assert flagged.endswith(plain.split("\n", 1)[1])
+
+
+def test_flag_paint_marks_escalated_chunks_and_derived_runs():
+    """An escalated chunk paints as covered (✓) with its former flags; the chip carries the
+    escalated count; a derived manifest's run row says what it derives from."""
+    from cjm_transcription_qt.panes import flag_chip, flag_line
+    covered = [{"transcriber": "cjm-capability-voxtral-hf", "reasons": ["degenerate"], "chars": 500,
+                "words_per_second": 0.4, "escalated": True}]
+    line = flag_line(covered)
+    assert line.startswith("✓ escalated") and "was flagged: cjm-capability-voxtral-hf degenerate" in line
+    assert flag_line([{**covered[0], "escalated": False}]).startswith("⚑ flagged:")
+    assert "✓ 1 escalated" in flag_chip(0, 3, escalated=1) and "flagged 1/3" in flag_chip(0, 3, escalated=1)
+    assert flag_chip(None, 0, escalated=2) == "<span style='color:#3f9d55'>✓ 2 escalated</span>"
+    derived = {**RUN, "run_id": "run-43", "parent_run_id": "run-42",
+               "derivation": {"kind": "add-transcript", "landings": [{"source_index": 0}]}}
+    rows = run_rows(FakeRunIndex([derived, RUN]))
+    assert "⤷ derived from run-42 (1 landing(s))" in rows[0]["text"] and "derived" not in rows[1]["text"]

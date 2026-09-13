@@ -138,6 +138,8 @@ class TranscriptionWindow(QMainWindow):
         # index, (source index, segment index) -> flagged rows, manifest order.
         self.flags: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
         self.flag_keys: List[Tuple[int, int]] = []
+        self.flags_all: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}  # incl. escalated (covered) chunks
+        self.escalated_keys: List[Tuple[int, int]] = []
         self.last_prompt_hash: str = ""
         self.bookmarks: List[str] = list(initial_bookmarks or [])
         self.player: Optional[SpanPlayer] = None
@@ -430,7 +432,7 @@ class TranscriptionWindow(QMainWindow):
             pos = min(self.results_seg, len(segs) - 1)
             self.res_text.setPlainText(
                 segment_text(seg, (pos, len(segs)),
-                             flags=self.flags.get((i, int(seg.get("index", pos))))))
+                             flags=self.flags_all.get((i, int(seg.get("index", pos))))))
 
     def _paint_results(self, keep_row: bool = False) -> None:
         """`keep_row` = an in-drill repaint (a flag jump, a landed chunk verb)
@@ -446,7 +448,7 @@ class TranscriptionWindow(QMainWindow):
             head = drill_header(m, self.run_index)
             cur = self._current_chunk()
             chip = flag_chip(self.flag_keys.index(cur) if cur in self.flag_keys else None,
-                             len(self.flag_keys))
+                             len(self.flag_keys), escalated=len(self.escalated_keys))
             self.res_head.setText(head + (f" &nbsp; {chip}" if chip else ""))
             row = self.res_list.currentRow()
             self._populate(self.res_list, drill_source_rows(m),
@@ -769,13 +771,21 @@ class TranscriptionWindow(QMainWindow):
         oversized / implausible words-per-second text on old ones) and extreme
         two-transcriber disagreement — keyed (source index, segment index)."""
         self.flags, self.flag_keys = {}, []
+        self.flags_all, self.escalated_keys = {}, []
         if self.results_run is None:
             return
         try:
-            self.flags = flagged_chunks(self.run_index.runs[self.results_run])
+            self.flags_all = flagged_chunks(self.run_index.runs[self.results_run],
+                                            include_escalated=True)
         except Exception as e:  # a foreign / pre-0.2.0 manifest censuses as clean
             self.notice = f"flag census unavailable: {e}"
-            self.flags = {}
+            self.flags_all = {}
+        # A chunk the operator already escalated (an external variant beside the
+        # flagged one) is COVERED: shown as such, skipped by the jump.
+        self.escalated_keys = [k for k, rows in self.flags_all.items()
+                               if all(r.get("escalated") for r in rows)]
+        self.flags = {k: rows for k, rows in self.flags_all.items()
+                      if k not in set(self.escalated_keys)}
         self.flag_keys = list(self.flags)
 
     def _current_chunk(self) -> Optional[Tuple[int, int]]:
@@ -856,21 +866,44 @@ class TranscriptionWindow(QMainWindow):
         label, code, out, err = payload
         self.busy = None
         lines = [l for l in (out or "").splitlines() if l.strip()]
+        derived = next((l.split(":", 1)[1].strip() for l in lines
+                        if l.startswith("derived manifest:")), None)
+        if code == 0 and derived is None:
+            # A zero exit with NO landing is a failure (the 2026-09-12 sighting:
+            # `python -m` on a module without a main guard exits 0 doing nothing).
+            code = -2
+            err = "the verb produced no landing (no 'derived manifest:' line in its output)"
         if code == 0:
             self.notice = f"{label}: {lines[-3] if len(lines) >= 3 else (lines[-1] if lines else 'done')}"
         else:
             tail = [l for l in (err or "").splitlines() if l.strip()]
             self.error = f"{label} failed ({code}): {tail[-1] if tail else (lines[-1] if lines else 'no output')}"
-        # The derived manifest is a NEW run: re-index so it shows at the top;
-        # the drilled run stays the parent the operator was walking.
+        # The derived manifest is a NEW run: re-index, then MOVE the drill onto it
+        # (the chain continues from the newest derived manifest — a second
+        # landing must derive from the first, and the operator sees what landed);
+        # on failure the drilled run stays put.
+        cur = self._current_chunk()
         keep = self._drilled_manifest()
         self.run_index.load()
         self._run_counts = self.run_index.counts_by_path()
-        if keep is not None:
-            self.results_run = next((i for i, m in enumerate(self.run_index.runs)
-                                     if m.get("run_id") == keep.get("run_id")), None)
-        if self.stage == "results":
-            self._paint_results(keep_row=True)
+        target = None
+        if derived is not None:
+            want = Path(derived).name
+            target = next((i for i, m in enumerate(self.run_index.runs)
+                           if Path(str(m.get("_path") or "")).name == want), None)
+        if target is None and keep is not None:
+            target = next((i for i, m in enumerate(self.run_index.runs)
+                           if m.get("run_id") == keep.get("run_id")), None)
+        self.results_run = target
+        if self.stage == "results" and self.results_run is not None:
+            self._index_flags()
+            if cur is not None:
+                self._goto_chunk(cur)
+            else:
+                self._paint_results(keep_row=True)
+            if derived is not None and code == 0:
+                m = self.run_index.runs[self.results_run]
+                self.notice += f" — now drilling {m.get('run_id')}"
         self._refresh_status()
 
     def _graph_argv(self, m: Dict[str, Any]) -> List[str]:

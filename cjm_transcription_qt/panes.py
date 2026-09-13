@@ -172,6 +172,11 @@ def run_rows(run_index: Any) -> List[Dict[str, Any]]:
         names = run_index.transcribers(m)
         if names:
             text += "  " + ", ".join(names)
+        if m.get("parent_run_id"):
+            # A DERIVED manifest (a chunk re-run / external landing chain):
+            # the newest one is the one to decompose from.
+            landings = len((m.get("derivation") or {}).get("landings") or [])
+            text += f"  ⤷ derived from {str(m['parent_run_id'])[:28]} ({landings} landing(s))"
         rows.append({"text": text, "style": "", "index": i})
     if not rows:
         rows.append({"text": "(no run manifests found — confirmed runs land here)",
@@ -233,17 +238,21 @@ def flag_line(flags: Optional[List[Dict[str, Any]]]) -> str:
         why = ",".join(f.get("reasons") or [])
         parts.append(f"{f.get('transcriber')} {why} "
                      f"({int(f.get('chars') or 0)} ch, {float(f.get('words_per_second') or 0):.1f} w/s)")
-    return "⚑ flagged: " + " · ".join(parts)
+    head = ("✓ escalated (an external transcript covers this chunk) — was flagged: "
+            if all(f.get("escalated") for f in flags) else "⚑ flagged: ")
+    return head + " · ".join(parts)
 
 
-def flag_chip(position: Optional[int], total: int) -> str:
+def flag_chip(position: Optional[int], total: int, escalated: int = 0) -> str:
     """Header chip: 'flagged k/K' when the cursor sits on a flagged chunk,
-    else the count alone; '' when the run has none."""
+    else the count alone; '' when the run has none; the escalated count
+    (chunks already covered by an external transcript) rides beside it."""
+    tail = f" <span style='color:#3f9d55'>· ✓ {escalated} escalated</span>" if escalated else ""
     if not total:
-        return ""
+        return (f"<span style='color:#3f9d55'>✓ {escalated} escalated</span>" if escalated else "")
     if position is None:
-        return f"<span style='color:#b9770e'>⚑ {total} flagged chunk(s)</span>"
-    return f"<span style='color:#b9770e'>⚑ flagged {position + 1}/{total}</span>"
+        return f"<span style='color:#b9770e'>⚑ {total} flagged chunk(s)</span>" + tail
+    return f"<span style='color:#b9770e'>⚑ flagged {position + 1}/{total}</span>" + tail
 
 
 def segment_text(seg: Dict[str, Any], position: Tuple[int, int],
