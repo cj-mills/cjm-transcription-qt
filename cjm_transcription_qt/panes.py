@@ -222,13 +222,42 @@ def drill_source_rows(manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
-def segment_text(seg: Dict[str, Any], position: Tuple[int, int]) -> str:
-    """A drilled segment as PLAIN text: header line, then one block per
-    transcriber (or the flat 0.1.x text)."""
+def flag_line(flags: Optional[List[Dict[str, Any]]]) -> str:
+    """The flagged-chunk lane's PLAIN-text verdict line for one chunk (cf0b91d6
+    part 4): one clause per flagged variant — transcriber, reasons, the
+    words/s and char size that earned them — or "" when the chunk is clean."""
+    if not flags:
+        return ""
+    parts = []
+    for f in flags:
+        why = ",".join(f.get("reasons") or [])
+        parts.append(f"{f.get('transcriber')} {why} "
+                     f"({int(f.get('chars') or 0)} ch, {float(f.get('words_per_second') or 0):.1f} w/s)")
+    return "⚑ flagged: " + " · ".join(parts)
+
+
+def flag_chip(position: Optional[int], total: int) -> str:
+    """Header chip: 'flagged k/K' when the cursor sits on a flagged chunk,
+    else the count alone; '' when the run has none."""
+    if not total:
+        return ""
+    if position is None:
+        return f"<span style='color:#b9770e'>⚑ {total} flagged chunk(s)</span>"
+    return f"<span style='color:#b9770e'>⚑ flagged {position + 1}/{total}</span>"
+
+
+def segment_text(seg: Dict[str, Any], position: Tuple[int, int],
+                 flags: Optional[List[Dict[str, Any]]] = None) -> str:
+    """A drilled segment as PLAIN text: header line, the flag verdict when
+    the chunk carries one, then one block per transcriber (or the flat
+    0.1.x text)."""
     idx, total = position
     out = [f"segment {idx + 1}/{total}"
            f"  [{float(seg.get('start') or 0):.1f}s – "
            f"{float(seg.get('end') or 0):.1f}s]"]
+    verdict = flag_line(flags)
+    if verdict:
+        out.append(verdict)
     texts = seg.get("transcripts")
     if isinstance(texts, dict) and texts:
         for tid, rec in texts.items():

@@ -20,8 +20,12 @@ The blocked-reason QTimer mirrors the Textual _watch_blocked poll at the same
 2s cadence."""
 
 import asyncio
+import subprocess
+import sys
+import tempfile
+import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from cjm_substrate_qt_kit.findbar import FindBar
 from cjm_substrate_qt_kit.keyhints import KeyHintsOverlay
@@ -33,19 +37,22 @@ from cjm_substrate_qt_kit.theme import style_text_pane
 from cjm_substrate_tui_kit.form import ConfigForm
 from cjm_transcription_core.candidates import (candidate_directives, model_axis, spec_string,
                                                transcription_manifests)
+from cjm_transcription_core.chunk import flagged_chunks, render_escalation_prompt
 from cjm_transcription_core.cli import expand_sources
 from cjm_transcription_core.models import PipelineConfig
 from cjm_transcription_core.results import RunIndex
 from cjm_transcription_core.sources import CollectionField, SourceBrowser
 from cjm_transcription_core.state import save_state
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import (QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
-                               QPlainTextEdit, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (QApplication, QInputDialog, QLabel, QListWidget, QListWidgetItem,
+                               QMainWindow, QPlainTextEdit, QSplitter, QStackedWidget, QVBoxLayout,
+                               QWidget)
 
 from .capability_session import CapabilitySession
 from .panes import (candidate_rows, compare_header, compare_rows, config_header, config_rows,
-                    cwd_label, drill_header, drill_source_rows, entry_rows, run_rows, segment_text,
-                    selection_html)
+                    cwd_label, drill_header, drill_source_rows, entry_rows, flag_chip, run_rows,
+                    segment_text, selection_html)
 
 HINTS = {
     "sources": "enter descend/toggle · a folder-source · c collection · x none · "
@@ -57,7 +64,8 @@ HINTS = {
     "compare": "[ ] segment · p play · d preprocess · l lightweight · a accuracy · "
                "r re-probe · escape cancel · enter confirm+run · b back · q quit",
     "results": "enter open run · j/k walk · b back · q quit",
-    "results_drill": "j/k source · [ ] segment · p play · b runs list · q quit",
+    "results_drill": "j/k source · [ ] segment · , . flagged · p play · t re-transcribe · "
+                     "e escalate · i import paste · b runs list · q quit",
 }
 
 
@@ -70,6 +78,7 @@ class TranscriptionWindow(QMainWindow):
     hash_done = Signal(object)
     unload_done = Signal(object)
     blocked_read = Signal(object)
+    chunk_done = Signal(object)     # worker-thread chunk verb (rerun / import) -> Qt thread
 
     def __init__(self, manifests_dir: str,
                  *, start_dir: str = ".",
@@ -125,6 +134,11 @@ class TranscriptionWindow(QMainWindow):
         self._run_counts: Dict[str, int] = {}
         self.results_run: Optional[int] = None
         self.results_seg = 0
+        # The flagged-chunk lane (cf0b91d6 part 4): the drilled run's census
+        # index, (source index, segment index) -> flagged rows, manifest order.
+        self.flags: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
+        self.flag_keys: List[Tuple[int, int]] = []
+        self.last_prompt_hash: str = ""
         self.bookmarks: List[str] = list(initial_bookmarks or [])
         self.player: Optional[SpanPlayer] = None
         self.sess = CapabilitySession(manifests_dir,
@@ -138,6 +152,7 @@ class TranscriptionWindow(QMainWindow):
         self.hash_done.connect(self._on_hash_done)
         self.unload_done.connect(lambda _f: self._refresh_status())
         self.blocked_read.connect(self._on_blocked_read)
+        self.chunk_done.connect(self._on_chunk_done)
         self.blocked_timer = QTimer(self)
         self.blocked_timer.setInterval(2000)
         self.blocked_timer.timeout.connect(self._poll_blocked)
@@ -269,6 +284,17 @@ class TranscriptionWindow(QMainWindow):
         add("segment-next", "Next segment", "]", lambda: self.on_segment(1),
             group="Audio")
         add("play", "Play", "P", self.on_play, group="Audio")
+        # The flagged-chunk lane (cf0b91d6 part 4; the 65791933 mark-jump shape).
+        add("flag-next", "Next flagged chunk", ".", lambda: self.on_flag(1),
+            group="Audio")
+        add("flag-prev", "Previous flagged chunk", ",", lambda: self.on_flag(-1),
+            group="Audio")
+        add("chunk-rerun", "Re-transcribe this chunk", "T", self.on_chunk_rerun,
+            group="Stage")
+        add("escalate", "Escalate chunk (copy prompt, open audio)", "E",
+            self.on_escalate, group="Stage")
+        add("import-paste", "Import a pasted transcript for this chunk", "I",
+            self.on_import_transcript, group="Stage")
         add("collection-none", "Clear collection", "X", self.on_collection_none,
             group="App")
         add("hash-check", "Hash check", "H", self.on_hash_check, group="App")
@@ -401,11 +427,15 @@ class TranscriptionWindow(QMainWindow):
             srcs = self.run_index.runs[self.results_run]["sources"]
             i = self.res_list.currentRow()
             segs = (srcs[i].get("segments") or []) if 0 <= i < len(srcs) else []
+            pos = min(self.results_seg, len(segs) - 1)
             self.res_text.setPlainText(
-                segment_text(seg, (min(self.results_seg, len(segs) - 1),
-                                   len(segs))))
+                segment_text(seg, (pos, len(segs)),
+                             flags=self.flags.get((i, int(seg.get("index", pos))))))
 
-    def _paint_results(self) -> None:
+    def _paint_results(self, keep_row: bool = False) -> None:
+        """`keep_row` = an in-drill repaint (a flag jump, a landed chunk verb)
+        keeps the sources cursor; a fresh drill never inherits the RUNS-list
+        row as a sources row."""
         if self.results_run is None:
             self.res_head.setText(f"<b>Past runs ({len(self.run_index.runs)})"
                                   f"</b> &nbsp;·&nbsp; {self.run_index.runs_dir}/")
@@ -413,8 +443,14 @@ class TranscriptionWindow(QMainWindow):
             self.res_text.setPlainText("")
         else:
             m = self.run_index.runs[self.results_run]
-            self.res_head.setText(drill_header(m, self.run_index))
-            self._populate(self.res_list, drill_source_rows(m))
+            head = drill_header(m, self.run_index)
+            cur = self._current_chunk()
+            chip = flag_chip(self.flag_keys.index(cur) if cur in self.flag_keys else None,
+                             len(self.flag_keys))
+            self.res_head.setText(head + (f" &nbsp; {chip}" if chip else ""))
+            row = self.res_list.currentRow()
+            self._populate(self.res_list, drill_source_rows(m),
+                           keep_row=row if (keep_row and row >= 0) else None)
             self._paint_transcript()
 
     def _refresh_status(self) -> None:
@@ -496,6 +532,7 @@ class TranscriptionWindow(QMainWindow):
                     return
                 self.results_run = idx
                 self.results_seg = 0
+                self._index_flags()
                 self._paint_results()
                 self._refresh_status()
         elif self.stage == "compare":
@@ -723,6 +760,213 @@ class TranscriptionWindow(QMainWindow):
         if self.stage == "compare" and self.sess.probe is not None and not self.busy:
             self.sess.drop_row_cache(self.seg_index)
             self._kick_compare()
+
+    # ---- the flagged-chunk lane (cf0b91d6 part 4; rulings 8a9b9639 · 9ffce5f7) ----
+
+    def _index_flags(self) -> None:
+        """Census the drilled run FROM ITS MANIFEST (no graph needed): total
+        failures first — runaway loops (degenerate-tail markers on new runs,
+        oversized / implausible words-per-second text on old ones) and extreme
+        two-transcriber disagreement — keyed (source index, segment index)."""
+        self.flags, self.flag_keys = {}, []
+        if self.results_run is None:
+            return
+        try:
+            self.flags = flagged_chunks(self.run_index.runs[self.results_run])
+        except Exception as e:  # a foreign / pre-0.2.0 manifest censuses as clean
+            self.notice = f"flag census unavailable: {e}"
+            self.flags = {}
+        self.flag_keys = list(self.flags)
+
+    def _current_chunk(self) -> Optional[Tuple[int, int]]:
+        """(source index, segment `index`) under the results-drill cursor."""
+        if self.stage != "results" or self.results_run is None:
+            return None
+        i = self.res_list.currentRow()
+        seg = self._results_segment()
+        if i < 0 or seg is None:
+            return None
+        return (i, int(seg.get("index", self.results_seg)))
+
+    def _drilled_manifest(self) -> Optional[Dict[str, Any]]:
+        if self.results_run is None:
+            return None
+        return self.run_index.runs[self.results_run]
+
+    def _goto_chunk(self, key: Tuple[int, int]) -> None:
+        """Move the drill cursor to (source index, segment index)."""
+        si, idx = key
+        m = self._drilled_manifest()
+        if m is None:
+            return
+        segs = (m["sources"][si].get("segments") or []) if 0 <= si < len(m["sources"]) else []
+        pos = next((p for p, s in enumerate(segs) if int(s.get("index", p)) == idx), 0)
+        self._stop_player()
+        if self.res_list.currentRow() != si:
+            self.res_list.setCurrentRow(si)   # -> _on_results_row_changed resets results_seg
+        self.results_seg = pos
+        self._paint_results(keep_row=True)
+
+    def on_flag(self, direction: int) -> None:
+        """, / . : jump to the previous / next flagged chunk (wraps; any chunk
+        stays escalatable — the lane is a jump aid, never a filter)."""
+        if self.stage != "results" or self.results_run is None or self.busy:
+            return
+        if not self.flag_keys:
+            self.notice = "no flagged chunks in this run"
+            self._refresh_status()
+            return
+        cur = self._current_chunk()
+        keys = self.flag_keys
+        if cur in keys:
+            j = (keys.index(cur) + direction) % len(keys)
+        else:
+            later = [k for k in keys if cur is None or k > cur]
+            j = keys.index(later[0]) if (direction > 0 and later) else (
+                keys.index([k for k in keys if cur is None or k < cur][-1])
+                if direction < 0 and any(cur is None or k < cur for k in keys) else 0)
+        self._goto_chunk(keys[j])
+        rows = self.flags.get(keys[j]) or []
+        self.notice = (f"flagged {j + 1}/{len(keys)}: "
+                       + " · ".join(f"{r.get('transcriber')} {','.join(r.get('reasons') or [])}" for r in rows))
+        self._refresh_status()
+
+    def _run_chunk_verb(self, argv: List[str], label: str) -> None:
+        """Run a transcription-core chunk verb (rerun-chunk / add-transcript) in
+        a worker thread as a subprocess of THIS interpreter's env; the result
+        lands on the Qt thread through the queued chunk_done signal. The verb
+        is the same headless CLI a hand-launched run uses — the app never
+        reimplements a landing (the hand-off principle, carried to the lane)."""
+        if self.busy:
+            return
+        self.error = None
+        self.busy = f"{label}…"
+        self._refresh_status()
+
+        def work() -> None:
+            try:
+                proc = subprocess.run([sys.executable, "-m", "cjm_transcription_core.cli"] + argv,
+                                      capture_output=True, text=True)
+                self.chunk_done.emit((label, proc.returncode, proc.stdout, proc.stderr))
+            except Exception as e:  # never strand the busy gate
+                self.chunk_done.emit((label, -1, "", str(e)))
+        threading.Thread(target=work, name="chunk-verb", daemon=True).start()
+
+    def _on_chunk_done(self, payload) -> None:
+        label, code, out, err = payload
+        self.busy = None
+        lines = [l for l in (out or "").splitlines() if l.strip()]
+        if code == 0:
+            self.notice = f"{label}: {lines[-3] if len(lines) >= 3 else (lines[-1] if lines else 'done')}"
+        else:
+            tail = [l for l in (err or "").splitlines() if l.strip()]
+            self.error = f"{label} failed ({code}): {tail[-1] if tail else (lines[-1] if lines else 'no output')}"
+        # The derived manifest is a NEW run: re-index so it shows at the top;
+        # the drilled run stays the parent the operator was walking.
+        keep = self._drilled_manifest()
+        self.run_index.load()
+        self._run_counts = self.run_index.counts_by_path()
+        if keep is not None:
+            self.results_run = next((i for i, m in enumerate(self.run_index.runs)
+                                     if m.get("run_id") == keep.get("run_id")), None)
+        if self.stage == "results":
+            self._paint_results(keep_row=True)
+        self._refresh_status()
+
+    def _graph_argv(self, m: Dict[str, Any]) -> List[str]:
+        """The landing's graph target flags: the app's explicit settings win,
+        else the parent manifest's recorded emission target (the CLI defaults
+        the same way; passing them keeps the hand-off reproducible)."""
+        rec = m.get("graph") or {}
+        cap = self.graph_capability or rec.get("capability")
+        db = self.graph_db_path or rec.get("db_path")
+        argv: List[str] = ["--manifests-dir", self.manifests_dir]
+        if cap:
+            argv += ["--graph-capability", str(cap)]
+        if db:
+            argv += ["--graph-db-path", str(db)]
+        return argv
+
+    def on_chunk_rerun(self) -> None:
+        """t: re-transcribe THIS chunk with one of the run's transcribers (cache
+        bypassed) — lands a new variant that SUPERSEDES the prior one and writes
+        a derived manifest (rerun-chunk)."""
+        cur = self._current_chunk()
+        m = self._drilled_manifest()
+        if cur is None or m is None or self.busy:
+            return
+        names = list((m.get("config") or {}).get("transcriber_capabilities") or self.run_index.transcribers(m))
+        if not names:
+            self.error = "this run names no transcribers"
+            self._refresh_status()
+            return
+        flagged = [r.get("transcriber") for r in self.flags.get(cur) or []]
+        default = next((n for n in names if n in flagged), names[0])
+        pick, ok = QInputDialog.getItem(self, "Re-transcribe chunk", "Transcriber:", names,
+                                        names.index(default), False)
+        if not ok or not pick:
+            return
+        si, idx = cur
+        argv = ["rerun-chunk", "--manifest", str(m.get("_path") or ""), "--transcriber", str(pick),
+                "--source", str(si), "--segment", str(idx), "--reason", "operator"] + self._graph_argv(m)
+        self._run_chunk_verb(argv, f"re-transcribing segment {idx} with {pick}")
+
+    def on_escalate(self) -> None:
+        """e: the copy-paste escalation gesture (f304d31d first cut): the prompt
+        WITH CONTEXT goes to the clipboard, the chunk's audio folder opens for
+        the upload; the model's answer comes back through `i`. Any chunk, not
+        only flagged ones (8a9b9639 (2))."""
+        cur = self._current_chunk()
+        m = self._drilled_manifest()
+        seg = self._results_segment()
+        if cur is None or m is None or seg is None:
+            return
+        try:
+            rendered = render_escalation_prompt(m, cur[0], cur[1])
+        except Exception as e:
+            self.error = f"prompt render failed: {e}"
+            self._refresh_status()
+            return
+        QApplication.clipboard().setText(rendered["prompt"])
+        self.last_prompt_hash = rendered["prompt_hash"]
+        wav = str(seg.get("model_input_path") or "")
+        if wav and Path(wav).exists():
+            opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(wav).parent)))
+            where = ("; audio folder opened" if opened
+                     else f"; audio at {Path(wav).parent} (folder open unsupported here)")
+        else:
+            where = "; audio not on disk (capability cache cleaned?)"
+        self.notice = (f"prompt copied ({rendered['prompt_hash'][:15]}…)" + where
+                       + " — paste the model's transcript with i")
+        self._refresh_status()
+
+    def on_import_transcript(self) -> None:
+        """i: land a pasted external transcript for THIS chunk as a third
+        transcriber (<model id>/manual) with the prompt hash the last `e`
+        rendered — the same landing a re-run uses (add-transcript)."""
+        cur = self._current_chunk()
+        m = self._drilled_manifest()
+        if cur is None or m is None or self.busy:
+            return
+        model_id, ok = QInputDialog.getText(self, "Import pasted transcript", "External model id:",
+                                            text="gemini-2.5-pro")
+        if not ok or not model_id.strip():
+            return
+        text, ok = QInputDialog.getMultiLineText(self, "Import pasted transcript",
+                                                 "Paste the model's transcript for this chunk:")
+        if not ok or not text.strip():
+            return
+        prompt_hash = self.last_prompt_hash or render_escalation_prompt(m, cur[0], cur[1])["prompt_hash"]
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".txt", prefix="chunk-paste-", delete=False,
+                                          encoding="utf-8")
+        tmp.write(text)
+        tmp.close()
+        si, idx = cur
+        argv = ["add-transcript", "--manifest", str(m.get("_path") or ""), "--source", str(si),
+                "--segment", str(idx), "--model-id", model_id.strip(), "--text-file", tmp.name,
+                "--prompt-hash", prompt_hash, "--text-source", "paste", "--reason", "escalation"] \
+            + self._graph_argv(m)
+        self._run_chunk_verb(argv, f"landing {model_id.strip()} transcript on segment {idx}")
 
     # ---- bookmarks + hash check ----------------------------------------
 

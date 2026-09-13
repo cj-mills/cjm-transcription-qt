@@ -149,3 +149,26 @@ def test_segment_text_multi_and_flat():
     assert "── w ──" in text and "hello" in text
     flat = segment_text({"start": 0, "end": 1, "text": "flat"}, (0, 2))
     assert flat.endswith("flat")
+
+
+def test_flag_line_chip_and_segment_text_verdict():
+    """The flagged-chunk lane's paint (cf0b91d6 part 4): the verdict line names each
+    flagged variant with its reasons and measures; the header chip shows k/K on a flagged
+    chunk, the count off one, nothing when the run is clean; segment_text stays the same
+    for an unflagged chunk."""
+    from cjm_transcription_qt.panes import flag_chip, flag_line
+    flags = [{"transcriber": "cjm-capability-voxtral-hf", "reasons": ["oversized", "implausible_rate"],
+              "chars": 124835, "words_per_second": 57.5},
+             {"transcriber": "whisper--small", "reasons": ["disagreement"], "chars": 2154, "words_per_second": 1.9}]
+    line = flag_line(flags)
+    assert line.startswith("⚑ flagged: cjm-capability-voxtral-hf oversized,implausible_rate (124835 ch, 57.5 w/s)")
+    assert " · whisper--small disagreement (2154 ch, 1.9 w/s)" in line
+    assert flag_line(None) == "" and flag_line([]) == ""
+    assert flag_chip(None, 0) == "" and "3 flagged chunk(s)" in flag_chip(None, 3)
+    assert "flagged 2/3" in flag_chip(1, 3)
+    seg = RUN["sources"][0]["segments"][0]
+    plain = segment_text(seg, (0, 1))
+    flagged = segment_text(seg, (0, 1), flags=flags)
+    assert plain == segment_text(seg, (0, 1), flags=None)
+    assert flagged.splitlines()[1].startswith("⚑ flagged:") and flagged.splitlines()[0] == plain.splitlines()[0]
+    assert flagged.endswith(plain.split("\n", 1)[1])

@@ -37,8 +37,10 @@ Qt shell for the transcription-workflow setup app — the first workflow TUI mig
 - `drill_header` _function_ — Run id + transcribers + the collection convergence audit (d544e250):
 - `drill_source_rows` _function_ — One row per source of a drilled run, chain + diarization outcome
 - `entry_rows` _function_ — One row per browser entry: pick state, dir slash, bookmark star, and the
+- `flag_chip` _function_ — Header chip: 'flagged k/K' when the cursor sits on a flagged chunk,
+- `flag_line` _function_ — The flagged-chunk lane's PLAIN-text verdict line for one chunk (cf0b91d6
 - `run_rows` _function_ — Past runs newest-first: id, timestamp, source count, transcribers.
-- `segment_text` _function_ — A drilled segment as PLAIN text: header line, then one block per
+- `segment_text` _function_ — A drilled segment as PLAIN text: header line, the flag verdict when
 - `selection_html` _function_ — The Selected block + Collection line (ae3464fc) as one HTML fragment.
 
 ## Dependencies
