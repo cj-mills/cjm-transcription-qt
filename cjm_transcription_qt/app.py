@@ -869,6 +869,19 @@ class TranscriptionWindow(QMainWindow):
                 self.chunk_done.emit((label, -1, "", str(e)))
         threading.Thread(target=work, name="chunk-verb", daemon=True).start()
 
+    def _write_verb_log(self, label: str, code: int, out: str, err: str) -> Optional[str]:
+        """Persist a failed verb's stdout + stderr beside the manifests dir (.cjm/logs)
+        so the cause is readable after the gutter line scrolls away."""
+        try:
+            import time
+            root = Path(self.manifests_dir).resolve().parent / "logs"
+            root.mkdir(parents=True, exist_ok=True)
+            p = root / time.strftime("chunk-verb-%Y%m%d-%H%M%S.log")
+            p.write_text(f"# {label}\n# exit {code}\n\n## stdout\n{out or ''}\n\n## stderr\n{err or ''}\n")
+            return str(p)
+        except Exception:
+            return None
+
     def _on_chunk_done(self, payload) -> None:
         label, code, out, err = payload
         self.busy = None
@@ -911,7 +924,11 @@ class TranscriptionWindow(QMainWindow):
             self.notice = f"{label}: {lines[-3] if len(lines) >= 3 else (lines[-1] if lines else 'done')}"
         else:
             tail = [l for l in (err or "").splitlines() if l.strip()]
-            self.error = f"{label} failed ({code}): {tail[-1] if tail else (lines[-1] if lines else 'no output')}"
+            # The verb's FULL output lands in a log the error names — one line of
+            # stderr never explains a failed capability load (2026-09-16).
+            log = self._write_verb_log(label, code, out, err)
+            self.error = (f"{label} failed ({code}): {tail[-1] if tail else (lines[-1] if lines else 'no output')}"
+                          + (f" — full output: {log}" if log else ""))
         # The derived manifest is a NEW run: re-index, then MOVE the drill onto it
         # (the chain continues from the newest derived manifest — a second
         # landing must derive from the first, and the operator sees what landed);
