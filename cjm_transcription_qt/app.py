@@ -35,9 +35,9 @@ from cjm_substrate_qt_kit.statusstrip import StatusStrip
 from cjm_substrate_qt_kit.style import apply_row_style
 from cjm_substrate_qt_kit.theme import style_text_pane
 from cjm_substrate_tui_kit.form import ConfigForm
+from cjm_transcript_graph_schema.schema import source_node_id
 from cjm_transcription_core.candidates import (candidate_directives, model_axis, spec_string,
                                                transcription_manifests)
-from cjm_transcript_graph_schema.schema import source_node_id
 from cjm_transcription_core.chunk import (DEFAULT_ESCALATION_MODEL_ID, flagged_chunks,
                                           render_escalation_prompt)
 from cjm_transcription_core.cli import expand_sources
