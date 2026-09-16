@@ -37,7 +37,9 @@ from cjm_substrate_qt_kit.theme import style_text_pane
 from cjm_substrate_tui_kit.form import ConfigForm
 from cjm_transcription_core.candidates import (candidate_directives, model_axis, spec_string,
                                                transcription_manifests)
-from cjm_transcription_core.chunk import flagged_chunks, render_escalation_prompt
+from cjm_transcript_graph_schema.schema import source_node_id
+from cjm_transcription_core.chunk import (DEFAULT_ESCALATION_MODEL_ID, flagged_chunks,
+                                          render_escalation_prompt)
 from cjm_transcription_core.cli import expand_sources
 from cjm_transcription_core.models import PipelineConfig
 from cjm_transcription_core.results import RunIndex
@@ -46,10 +48,11 @@ from cjm_transcription_core.state import save_state
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QInputDialog, QLabel, QListWidget, QListWidgetItem,
-                               QMainWindow, QPlainTextEdit, QSplitter, QStackedWidget, QVBoxLayout,
-                               QWidget)
+                               QMainWindow, QMessageBox, QPlainTextEdit, QSplitter, QStackedWidget,
+                               QVBoxLayout, QWidget)
 
 from .capability_session import CapabilitySession
+from .escalation import classify_refusal, refusal_line, resolve_decomp_core, respine_argv
 from .panes import (candidate_rows, compare_header, compare_rows, config_header, config_rows,
                     cwd_label, drill_header, drill_source_rows, entry_rows, flag_chip, run_rows,
                     segment_text, selection_html)
@@ -141,6 +144,7 @@ class TranscriptionWindow(QMainWindow):
         self.flags_all: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}  # incl. escalated (covered) chunks
         self.escalated_keys: List[Tuple[int, int]] = []
         self.last_prompt_hash: str = ""
+        self._pending_import: Optional[Dict[str, Any]] = None  # a respine-routed import awaiting the verb's answer (0b4d5cfa (1))
         self.bookmarks: List[str] = list(initial_bookmarks or [])
         self.player: Optional[SpanPlayer] = None
         self.sess = CapabilitySession(manifests_dir,
@@ -841,22 +845,25 @@ class TranscriptionWindow(QMainWindow):
                        + " · ".join(f"{r.get('transcriber')} {','.join(r.get('reasons') or [])}" for r in rows))
         self._refresh_status()
 
-    def _run_chunk_verb(self, argv: List[str], label: str) -> None:
-        """Run a transcription-core chunk verb (rerun-chunk / add-transcript) in
-        a worker thread as a subprocess of THIS interpreter's env; the result
+    def _run_chunk_verb(self, argv: List[str], label: str,
+                        exe: Optional[List[str]] = None) -> None:
+        """Run a chunk verb (rerun-chunk / add-transcript, or decomp-core's
+        respine-chunk via `exe`) in a worker thread as a subprocess; the result
         lands on the Qt thread through the queued chunk_done signal. The verb
         is the same headless CLI a hand-launched run uses — the app never
-        reimplements a landing (the hand-off principle, carried to the lane)."""
+        reimplements a landing (the hand-off principle, carried to the lane).
+        `exe` (default: THIS interpreter's transcription-core CLI) is the
+        resolved console script of another core's env (the hub's ladder)."""
         if self.busy:
             return
         self.error = None
         self.busy = f"{label}…"
         self._refresh_status()
+        cmd = list(exe) if exe else [sys.executable, "-m", "cjm_transcription_core.cli"]
 
         def work() -> None:
             try:
-                proc = subprocess.run([sys.executable, "-m", "cjm_transcription_core.cli"] + argv,
-                                      capture_output=True, text=True)
+                proc = subprocess.run(cmd + argv, capture_output=True, text=True)
                 self.chunk_done.emit((label, proc.returncode, proc.stdout, proc.stderr))
             except Exception as e:  # never strand the busy gate
                 self.chunk_done.emit((label, -1, "", str(e)))
@@ -865,6 +872,33 @@ class TranscriptionWindow(QMainWindow):
     def _on_chunk_done(self, payload) -> None:
         label, code, out, err = payload
         self.busy = None
+        pending, self._pending_import = self._pending_import, None
+        if pending is not None and code == 2:
+            # The respine verb REFUSED (0b4d5cfa (5)): dependents want the operator's
+            # say-so to strand; no live spine means the plain landing still applies.
+            kind = classify_refusal(out)
+            why = refusal_line(out) or "refused"
+            if kind == "dependents":
+                ans = QMessageBox.question(
+                    self, "Respine chunk — dependents",
+                    f"{why}\n\nStrand the non-transferable corrections and respine anyway?\n"
+                    "(No = land the transcript only; the chunk keeps its current segments.)",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if ans == QMessageBox.Yes:
+                    self._pending_import = None
+                    self._run_chunk_verb(pending["respine_argv"] + ["--strand"], pending["label"] + " (strand)",
+                                         exe=pending["exe"])
+                    return
+                self.notice = "respine declined — landing the transcript only"
+                self._run_chunk_verb(pending["add_argv"], pending["add_label"])
+                return
+            if kind == "no-spine":
+                self.notice = f"no live spine to respine into ({why[:80]}) — landing the transcript only"
+                self._run_chunk_verb(pending["add_argv"], pending["add_label"])
+                return
+            self.error = f"{label} refused: {why}"
+            self._refresh_status()
+            return
         lines = [l for l in (out or "").splitlines() if l.strip()]
         derived = next((l.split(":", 1)[1].strip() for l in lines
                         if l.startswith("derived manifest:")), None)
@@ -976,13 +1010,17 @@ class TranscriptionWindow(QMainWindow):
     def on_import_transcript(self) -> None:
         """i: land a pasted external transcript for THIS chunk as a third
         transcriber (<model id>/manual) with the prompt hash the last `e`
-        rendered — the same landing a re-run uses (add-transcript)."""
+        rendered. ROUTED through decomp-core's respine-chunk when its console
+        script resolves (0b4d5cfa (1)): the same landing, then the chunk is
+        re-derived INTO the source's live spine; the verb's refusals come back
+        as questions (dependents -> strand?) or as the plain landing (no live
+        spine). Without the decomp script the plain add-transcript runs."""
         cur = self._current_chunk()
         m = self._drilled_manifest()
         if cur is None or m is None or self.busy:
             return
         model_id, ok = QInputDialog.getText(self, "Import pasted transcript", "External model id:",
-                                            text="gemini-2.5-pro")
+                                            text=DEFAULT_ESCALATION_MODEL_ID)
         if not ok or not model_id.strip():
             return
         text, ok = QInputDialog.getMultiLineText(self, "Import pasted transcript",
@@ -995,11 +1033,23 @@ class TranscriptionWindow(QMainWindow):
         tmp.write(text)
         tmp.close()
         si, idx = cur
-        argv = ["add-transcript", "--manifest", str(m.get("_path") or ""), "--source", str(si),
-                "--segment", str(idx), "--model-id", model_id.strip(), "--text-file", tmp.name,
-                "--prompt-hash", prompt_hash, "--text-source", "paste", "--reason", "escalation"] \
-            + self._graph_argv(m)
-        self._run_chunk_verb(argv, f"landing {model_id.strip()} transcript on segment {idx}")
+        graph_argv = self._graph_argv(m)
+        add_argv = ["add-transcript", "--manifest", str(m.get("_path") or ""), "--source", str(si),
+                    "--segment", str(idx), "--model-id", model_id.strip(), "--text-file", tmp.name,
+                    "--prompt-hash", prompt_hash, "--text-source", "paste", "--reason", "escalation"] \
+            + graph_argv
+        add_label = f"landing {model_id.strip()} transcript on segment {idx}"
+        exe = resolve_decomp_core()
+        content_hash = str((m["sources"][si] if 0 <= si < len(m.get("sources") or []) else {}).get("content_hash") or "")
+        if exe is None or not content_hash:
+            self._run_chunk_verb(add_argv, add_label)
+            return
+        rargv = respine_argv(source_node_id(content_hash), idx, tmp.name, model_id.strip(), prompt_hash,
+                             graph_argv, str(Path(str(m.get("_path") or "")).parent))
+        label = f"respining segment {idx} from {model_id.strip()}"
+        self._pending_import = {"add_argv": add_argv, "add_label": add_label, "respine_argv": rargv,
+                                "label": label, "exe": [exe]}
+        self._run_chunk_verb(rargv, label, exe=[exe])
 
     # ---- bookmarks + hash check ----------------------------------------
 
