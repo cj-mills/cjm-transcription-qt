@@ -5,7 +5,7 @@ kit ConfigForm), plain dicts for candidates/rows/manifests."""
 
 from pathlib import Path
 
-from cjm_substrate_tui_kit.form import ConfigForm
+from cjm_substrate_qt_kit.configform import ConfigForm
 from cjm_transcription_core.sources import CollectionField, SourceBrowser
 
 from cjm_transcription_qt.panes import (candidate_rows, compare_header,

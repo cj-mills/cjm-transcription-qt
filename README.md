@@ -10,6 +10,7 @@ Qt shell for the transcription-workflow setup app — the first workflow TUI mig
 - **`cjm_transcription_qt.app`** — The Qt transcription-workflow shell: the same three-stage run setup as the
 - **`cjm_transcription_qt.capability_session`** — One capability stack behind a private asyncio loop thread — the jobs+progress
 - **`cjm_transcription_qt.cli`** — Console-script driver for the Qt shell: the SAME argument surface,
+- **`cjm_transcription_qt.escalation`** — Escalation routing for the transcription app's `i` import (ruling 0b4d5cfa (1): an
 - **`cjm_transcription_qt.panes`** — Pure row/label builders for the Qt shell — the paint logic, Qt-free.
 
 ## API
@@ -25,6 +26,13 @@ Qt shell for the transcription-workflow setup app — the first workflow TUI mig
 ### `cjm_transcription_qt.cli`
 
 - `main` _function_ — Resolve the shared setup surface, run the Qt setup window, hand off.
+
+### `cjm_transcription_qt.escalation`
+
+- `classify_refusal` _function_ — Which answer a refusal wants: DEPENDENTS = ask the operator to strand and re-run;
+- `refusal_line` _function_ — The refusal the verb printed (exit 2 prints exactly one).
+- `resolve_decomp_core` _function_ — PATH first (an env that installs everything wins), then the sibling env's bin
+- `respine_argv` _function_ — The verb's argv: land the paste + respine the chunk in the live spine.
 
 ### `cjm_transcription_qt.panes`
 
@@ -45,4 +53,4 @@ Qt shell for the transcription-workflow setup app — the first workflow TUI mig
 
 ## Dependencies
 
-**Depends on:** `PySide6`, `cjm-substrate`, `cjm-substrate-qt-kit`, `cjm-substrate-tui-kit`, `cjm-transcription-core`
+**Depends on:** `PySide6`, `cjm-substrate`, `cjm-substrate-qt-kit`, `cjm-transcript-graph-schema`, `cjm-transcription-core`
