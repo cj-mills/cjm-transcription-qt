@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [{name = "Christian J. Mills", email = "9126128+cj-mills@users.noreply.github.com"}]
 classifiers = ["Programming Language :: Python :: 3", "Programming Language :: Python :: 3 :: Only"]
-dependencies = ['cjm-transcription-core>=0.0.18', 'cjm-transcript-graph-schema>=0.0.11', 'cjm-substrate>=0.0.61', 'cjm-substrate-qt-kit>=0.0.7', 'PySide6']
+dependencies = ['cjm-transcription-core>=0.0.18', 'cjm-transcript-graph-schema>=0.0.11', 'cjm-substrate>=0.0.61', 'cjm-substrate-qt-kit>=0.0.8', 'PySide6']
 
 [project.scripts]
 cjm-transcription-qt = "cjm_transcription_qt.cli:main"
