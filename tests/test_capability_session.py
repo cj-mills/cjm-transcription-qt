@@ -10,7 +10,6 @@ import time
 from typing import Any, List, Optional
 
 import pytest
-
 from cjm_transcription_qt.capability_session import CapabilitySession
 
 

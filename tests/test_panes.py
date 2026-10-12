@@ -7,10 +7,8 @@ from pathlib import Path
 
 from cjm_substrate_qt_kit.configform import ConfigForm
 from cjm_transcription_core.sources import CollectionField, SourceBrowser
-
-from cjm_transcription_qt.panes import (candidate_rows, compare_header,
-                                        compare_rows, config_rows, drill_header,
-                                        drill_source_rows, entry_rows, run_rows,
+from cjm_transcription_qt.panes import (candidate_rows, compare_header, compare_rows, config_rows,
+                                        drill_header, drill_source_rows, entry_rows, run_rows,
                                         segment_text, selection_html)
 
 
