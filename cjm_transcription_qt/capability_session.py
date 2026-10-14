@@ -40,6 +40,7 @@ class CapabilitySession(LoopThreadSession):
     GraphSession."""
 
     thread_name = "capability-session"
+    app = "transcription"  # its gestures name this app; it opens no graph, so no ledger records them (4389a579)
 
     def __init__(self, manifests_dir: str,
                  *, sysmon_capability: Optional[str] = None,
